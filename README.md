@@ -1,8 +1,8 @@
+### *Commented out the execute steps for Daily routine. Changed naming pattern to match the Zabbix blog. 
+### **The trends and trends_uint require manual partitioning still.
+
 # zabbixPart 
 ### Remember that it is a good habit to backup database before running such commands ;)
-
-## Commented out the execute steps for Daily routine. Changed naming pattern to match the Zabbix blog. **The trends and trends_uint require manual partitioning still.
-
 Partitioner for zabbix mysql database with ability to partition existing database.
 It allows you to partition existing mysql zabbix database when run with "init" parameter.
 In order to partition existing zabbix it will:
