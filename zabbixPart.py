@@ -4,7 +4,10 @@
 #   can do whatever you want with this stuff. If we meet some day, and you think
 #   this stuff is worth it, you can buy me a beer in return.
 #   ----------------------------------------------------------------------------
- 
+
+#Modify format to match naming from blog and allow perl script to manage in mysql container
+#https://github.com/OpensourceICTSolutions/zabbix-mysql-partitioning-perl
+#https://blog.zabbix.com/partitioning-a-zabbix-mysql-database-with-perl-or-stored-procedures/13531/
 
 import mysql.connector
 import datetime
@@ -15,13 +18,27 @@ dbName = 'zabbix'
 dbPass = 'password'
 
 # function to partition existing zabbix tables
+def zerotime(dtValue):
+    try:
+        dtvalue = dtvalue.replace(hour=0, minute=0, second = 0)
+        return dtvalue
+    except:
+        print("Error zeroing time.")
+
+def addaday(dtvalue):
+    try:
+        dtvalue = dtvalue + datetime.timedelta(days=1)
+        return dtvalue
+    except:
+        print("Error adding a day.")
+
 def partition(tablename, interval):
     db = mysql.connector.connect(user=dbUser, database=dbName, password=dbPass)
     cursor = db.cursor(buffered=True)
-    print("hello i am going to partition "+tablename+" with interval of "+str(interval)+" days")
+    print("Partitioning "+tablename+" with interval of "+str(interval)+" days")
     print("")
     print("create empty temp table with the same schema")
-    tempTableName = tablename+"j23fj09awdj"
+    tempTableName = tablename+"tmppart"
 
     print("first drop temp table if it exist")
     try:
@@ -45,8 +62,7 @@ def partition(tablename, interval):
     print(Query)
     cursor.execute(Query)
     for val in cursor:
-        partTimestamp = int(val[0].timestamp())
-        partDatetime = val[0]
+        partDatetime = val[0].replace(hour=0, minute=0, second = 0)
 
     print("get last day of the data")
     Query = ("SELECT FROM_UNIXTIME(MAX(clock)) FROM "+tablename+";")
@@ -54,21 +70,19 @@ def partition(tablename, interval):
     cursor.execute(Query)
     for val in cursor:
         print(val[0])
-        maxTimestamp = int(val[0].timestamp())
-        maxDatetime = val[0]
-    unixTimestamp = str(partDatetime.year)+"-"+str(partDatetime.month).zfill(2)+"-"+str(partDatetime.day).zfill(2)+" 00:00:00"
+        maxDatetime = val[0].replace(hour=0, minute=0, second = 0)
     diff = maxDatetime - partDatetime
 
     print("start partitioning - create partition in temp table for "+str(diff.days)+" days")
     firstpart = True
     while diff.days > 0:
-        partName = "p"+str(partDatetime.year)+str(partDatetime.month).zfill(2)+str(partDatetime.day).zfill(2)
+        partName = "p"+str(partDatetime.year)+"_"+str(partDatetime.month).zfill(2)+"_"+str(partDatetime.day).zfill(2)
         Query = ""
         if firstpart:
-            Query = "ALTER TABLE "+tempTableName+" PARTITION BY RANGE(clock) PARTITIONS 1(PARTITION "+partName+" VALUES LESS THAN("+str(int(partDatetime.timestamp()))+"));"
+            Query = "ALTER TABLE "+tempTableName+" PARTITION BY RANGE(clock) PARTITIONS 1(PARTITION "+partName+" VALUES LESS THAN(UNIX_TIMESTAMP(\""+str(addaday(partDatetime))+"\")));"
             firstpart = False
         else:
-            Query = "ALTER TABLE "+tempTableName+" ADD PARTITION (PARTITION "+partName+" VALUES LESS THAN("+str(int(partDatetime.timestamp()))+"));"
+            Query = "ALTER TABLE "+tempTableName+" ADD PARTITION (PARTITION "+partName+" VALUES LESS THAN (UNIX_TIMESTAMP(\""+str(addaday(partDatetime))+"\")));"
         partDatetime += datetime.timedelta(days=interval)
         diff = maxDatetime - partDatetime
         print("days left: "+str(diff.days))
@@ -78,9 +92,10 @@ def partition(tablename, interval):
         db.commit()
 
     print("last interval")
-    maxDatetime = datetime.datetime(year=maxDatetime.year, month=maxDatetime.month, day=maxDatetime.day)
-    partName = "p"+str(maxDatetime.year)+str(maxDatetime.month).zfill(2)+str(maxDatetime.day).zfill(2)
-    Query = "ALTER TABLE "+tempTableName+" ADD PARTITION (PARTITION "+partName+" VALUES LESS THAN("+str(int(maxDatetime.timestamp()))+"));"
+    #maxDatetime = datetime.datetime(year=maxDatetime.year, month=maxDatetime.month, day=maxDatetime.day)
+
+    partName = "p"+str(partDatetime.year)+"_"+str(partDatetime.month).zfill(2)+"_"+str(partDatetime.day).zfill(2)
+    Query = "ALTER TABLE "+tempTableName+" ADD PARTITION (PARTITION "+partName+" VALUES LESS THAN (UNIX_TIMESTAMP(\""+str(addaday(maxDatetime))+"\")));"
     Query = (Query)
     print(Query)
     cursor.execute(Query)
@@ -88,8 +103,8 @@ def partition(tablename, interval):
 
     print("and one more to be sure....")
     maxDatetime += datetime.timedelta(days=interval)
-    partName = "p"+str(maxDatetime.year)+str(maxDatetime.month).zfill(2)+str(maxDatetime.day).zfill(2)
-    Query = "ALTER TABLE "+tempTableName+" ADD PARTITION (PARTITION "+partName+" VALUES LESS THAN("+str(int(maxDatetime.timestamp()))+"));"
+    partName = "p"+str(maxDatetime.year)+"_"+str(maxDatetime.month).zfill(2)+"_"+str(maxDatetime.day).zfill(2)
+    Query = "ALTER TABLE "+tempTableName+" ADD PARTITION (PARTITION "+partName+" VALUES LESS THAN (UNIX_TIMESTAMP(\""+str(addaday(maxDatetime))+"\")));"
     print(Query)
     Query = (Query)
     cursor.execute(Query)
@@ -140,8 +155,8 @@ def dailyRoutine(tablename, interval):
             Query = "ALTER TABLE "+tablename+" DROP PARTITION "+partName[0]+";"
             print(Query)
             Query = (Query)
-            cursor.execute(Query)
-            db.commit()
+            #cursor.execute(Query)
+            #db.commit()
         else:
             break
 
@@ -153,15 +168,15 @@ def dailyRoutine(tablename, interval):
     cursor.execute(Query)
     result = cursor.fetchall()
     lastPart = result[0][0]
-    if lastPart - datetime.datetime.now() < datetime.timedelta(days=interval):
+    if lastPart - zerotime(datetime.datetime.now()) < datetime.timedelta(days=interval):
         print("it is a good time to create a new partition for "+tablename)
         lastPart += datetime.timedelta(days=interval)
-        partName = "p"+str(lastPart.year)+str(lastPart.month).zfill(2)+str(lastPart.day).zfill(2)
-        Query = "ALTER TABLE "+tablename+" ADD PARTITION (PARTITION "+partName+" VALUES LESS THAN("+str(int(lastPart.timestamp()))+"));"
+        partName = "p"+str(lastPart.year)+"_"+str(lastPart.month).zfill(2)+"_"+str(lastPart.day).zfill(2)
+        Query = "ALTER TABLE "+tablename+" ADD PARTITION (PARTITION "+partName+" VALUES LESS THAN (UNIX_TIMESTAMP(\""+str(lastPart)+"\")));"
         Query = (Query)
         print(Query)
-        cursor.execute(Query)
-        db.commit()
+        #cursor.execute(Query)
+        #db.commit()
     else:
         print("partitions are ok")
     cursor.close()
@@ -196,6 +211,11 @@ else:
     try:
         if sys.argv[6] == "init":
             print("Starting partitioning tables with data and trends")
+            print("Run without \"init\" to run the daily routine.")
             partition(tablename, int(interval))
+        else:
+            print("Running dailyRoutine")
+            dailyRoutine(tablename, int(interval))
     except:
-        dailyRoutine(tablename, int(interval))
+        print("end")
+        print("ERROR")
